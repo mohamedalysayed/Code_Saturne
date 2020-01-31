@@ -1,0 +1,656 @@
+# -*- coding: utf-8 -*-
+# @configure_input@
+
+#-------------------------------------------------------------------------------
+
+# This file is part of Code_Saturne, a general-purpose CFD tool.
+#
+# Copyright (C) 1998-2020 EDF S.A.
+#
+# This program is free software; you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation; either version 2 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program; if not, write to the Free Software Foundation, Inc., 51 Franklin
+# Street, Fifth Floor, Boston, MA 02110-1301, USA.
+
+#-------------------------------------------------------------------------------
+
+import os
+import sys
+from optparse import OptionParser
+
+#-------------------------------------------------------------------------------
+
+# Prerequisites libraries
+#------------------------
+
+class prerequisite:
+
+    def __init__(self, name, have = "no",
+                 variant = None, dynamic_load = False,
+                 prefix = None, execprefix = None,
+                 bindir = None, includedir = None, libdir = None,
+                 flags = None):
+
+        # Library name
+        self.name = name
+
+        # Have
+        self.have = have
+
+        # Loaded dynamically on demand (linked separately)
+        self.dynamic_load = dynamic_load
+
+        # Library variant
+        self.variant = variant
+
+        # Library installation directories
+        self.prefix = prefix
+        self.execprefix = execprefix
+        self.bindir = bindir
+        self.includedir = includedir
+        self.libdir = libdir
+
+        # Library build (dictionnary {cppflags, ldflags, libs})
+        self.flags = flags
+
+    def print_config(self):
+
+        print("Prequisite: " + self.name)
+
+
+# Configuration info
+#-------------------
+
+class config:
+
+    def __init__(self):
+
+        # List of optionnal features
+
+        self.optfeatures = ['debug', 'relocatable', 'shared',
+                            'gui', 'frontend',
+                            'mpi', 'openmp', 'socket',
+                            'long-gnum', 'nls', 'host']
+        self.features = {}
+
+        # List of mandatory and optionnal libraries to link with
+        # The order is important so as to have a coherent link command
+
+        self.deplibs = ['saturne',                      # Code_Saturne
+                        'ple',                          # PLE
+                        'eos', 'freesteam', 'coolprop', # Equations of state
+                        'ccm', 'cgns', 'med', 'hdf5',   # Mesh filters
+                        'catalyst', 'melissa',          # co-processing libraries
+                        'medcoupling',                  # MED coupling
+                        'petsc',                        # Linear algebra
+                        'metis', 'scotch',              # Partionning libraries
+                        'mpi',                          # MPI
+                        'cuda',                         # CUDA
+                        'blas',                         # BLAS (benchmark use)
+                        'system']                       # User & system libraries
+
+        # Compilers, flags and special commands
+
+        self.compilers = {'cc': "@CC@",
+                          'cxx': "@CXX@",
+                          'fc': "@FC@",
+                          'ld': "@CS_LD@",
+                          'version': "@CC_VERSION@"}
+
+        self.flags = {'cflags': "@CFLAGS@ @CFLAGS_DBG@ @CFLAGS_OPT@",
+                      'cxxflags': "@CXXFLAGS@ @CXXFLAGS_DBG@ @CXXFLAGS_OPT@",
+                      'fcflags': "@FCFLAGS@ @FCFLAGS_DBG@ @FCFLAGS_OPT@"}
+
+        self.fcmodinclude = "@FCMODINCLUDE@"
+        self.rpath = "@LDRPATH@"
+        self.special_user_link = "@cs_special_user_link@"
+
+        # Constants for system-dependant file extensions
+        if sys.platform.startswith("win"):
+            self.cfgext = ".ini"
+            self.exeext = ".exe"
+            self.shext = ".bat"
+        else:
+            self.cfgext = ".cfg"
+            self.exeext = ""
+            self.shext = ""
+
+        # Libraries to add for specific executable names
+
+        self.exec_libs = {'cs_solver' + self.exeext: "-lcs_solver",
+                          'nc_solver' + self.exeext: "-lneptune"}
+
+        # Python-related information
+
+        self.python = "@PYTHON@"
+        self.pyuic4 = "@PYUIC4@"
+        self.pyrcc4 = "@PYRCC4@"
+        self.pyuic5 = "@PYUIC5@"
+        self.pyrcc5 = "@PYRCC5@"
+
+        # Execution environment
+
+        self.env_modules = "@cs_env_modules@"
+        self.env_modulecmd = "@MODULECMD@"
+
+        # SALOME-related information
+
+        self.salome_env = "@SALOMEENVCMD@"
+
+        # Setup the optionnal features
+
+        self.features['debug'] = "@debug@"
+        self.features['relocatable'] = "@relocatable@"
+        self.features['shared'] = "@enable_shared@"
+        self.features['gui'] = "@cs_have_gui@"
+        self.features['frontend'] = "@cs_have_frontend@"
+        self.features['mpi'] = "@cs_have_mpi@"
+        self.features['openmp'] = "@cs_have_openmp@"
+        self.features['cuda'] = "@cs_have_cuda@"
+        self.features['long-gnum'] = "@cs_have_long_gnum@"
+        self.features['nls'] = '@USE_NLS@'
+        self.features['build_os'] = "@build_os@"
+
+        # Now, one can setup the prerequisites information
+
+        self.libs = {}
+
+        # Setup Code_Saturne libraries
+        # Here, CPPFLAGS and LDFLAGS will be provided by a get_dir method
+
+        self.libs['saturne'] = \
+            prerequisite("Code_Saturne",
+                         have = "yes",
+                         flags = {'cppflags': "",
+                                  'ldflags': "",
+                                  'libs': "-lsaturne"})
+
+        # Setup PLE library
+        # Here, the variant (internal or external) will be used to add
+        # paths to the command line
+
+        self.libs['ple'] = \
+            prerequisite("PLE",
+                         have = "yes",
+                         variant = "@ple_type@",
+                         flags = {'cppflags': "@PLE_CPPFLAGS@",
+                                  'ldflags': "@PLE_LDFLAGS@",
+                                  'libs': "@PLE_LIBS@"})
+
+        # Setup user and system libraries
+
+        self.libs['system'] = \
+            prerequisite("System",
+                         have = "yes",
+                         flags = {'cppflags': "@CPPFLAGS@",
+                                  'ldflags': "@LDFLAGS@",
+                                  'libs': "@LIBINTL@ @LIBS@ @FCLIBS@"})
+
+        # Setup the optionnal libraries
+
+        self.libs['blas'] = \
+            prerequisite("BLAS",
+                         have = "@cs_have_blas@",
+                         flags = {'cppflags': "@BLAS_CPPFLAGS@",
+                                  'ldflags': "@BLAS_LDFLAGS@",
+                                  'libs': "@BLAS_LIBS@"})
+
+        self.libs['ccm'] = \
+            prerequisite("CCM",
+                         have = "@cs_have_ccm@",
+                         flags = {'cppflags': "@CCM_CPPFLAGS@",
+                                  'ldflags': "@CCM_LDFLAGS@",
+                                  'libs': "@CCM_LIBS@"})
+
+        self.libs['cgns'] = \
+            prerequisite("CGNS",
+                         have = "@cs_have_cgns@",
+                         flags = {'cppflags': "@CGNS_CPPFLAGS@",
+                                  'ldflags': "@CGNS_LDFLAGS@",
+                                  'libs': "@CGNS_LIBS@"})
+
+        self.libs['hdf5'] = \
+            prerequisite("HDF5",
+                         have = "@cs_have_hdf5@",
+                         flags = {'cppflags': "@HDF5_CPPFLAGS@",
+                                  'ldflags': "@HDF5_LDFLAGS@",
+                                  'libs': "@HDF5_LIBS@"})
+
+        self.libs['med'] = \
+            prerequisite("MED",
+                         have = "@cs_have_med@",
+                         flags = {'cppflags': "@MED_CPPFLAGS@",
+                                  'ldflags': "@MED_LDFLAGS@",
+                                  'libs': "@MED_LIBS@"})
+
+        self.libs['catalyst'] = \
+            prerequisite("CATALYST",
+                         have = "@cs_have_catalyst@",
+                         dynamic_load = @cs_py_have_plugin_catalyst@,
+                         flags = {'cppflags': "@CATALYST_CPPFLAGS@",
+                                  'ldflags': "@CATALYST_LDFLAGS@",
+                                  'libs': "@CATALYST_LIBS@"})
+
+        self.libs['melissa'] = \
+            prerequisite("MELISSA",
+                         have = "@cs_have_melissa@",
+                         dynamic_load = @cs_py_have_plugin_melissa@,
+                         flags = {'cppflags': "@MELISSA_CPPFLAGS@",
+                                  'ldflags': "@MELISSA_LDFLAGS@",
+                                  'libs': "@MELISSA_LIBS@"})
+
+        self.libs['medcoupling'] = \
+            prerequisite("MEDCOUPLING",
+                         have = "@cs_have_medcoupling@",
+                         dynamic_load = @cs_py_have_plugin_medcoupling@,
+                         flags = {'cppflags': "@MEDCOUPLING_CPPFLAGS@",
+                                  'ldflags': "@MEDCOUPLING_LDFLAGS@",
+                                  'libs': "@MEDCOUPLING_LIBS@"})
+
+        self.libs['eos'] = \
+            prerequisite("EOS",
+                         have = "@cs_have_eos@",
+                         prefix="@eos_prefix@",
+                         flags = {'cppflags': "@EOS_CPPFLAGS@",
+                                  'ldflags': "@EOS_LDFLAGS@",
+                                  'libs': "@EOS_LIBS@"})
+
+        self.libs['freesteam'] = \
+            prerequisite("FREESTEAM",
+                         have = "@cs_have_freesteam@",
+                         prefix="@freesteam_prefix@",
+                         flags = {'cppflags': "@FREESTEAM_CPPFLAGS@",
+                                  'ldflags': "@FREESTEAM_LDFLAGS@",
+                                  'libs': "@FREESTEAM_LIBS@"})
+
+        self.libs['coolprop'] = \
+            prerequisite("COOLPROP",
+                         have = "@cs_have_coolprop@",
+                         prefix="@coolprop_prefix@",
+                         flags = {'cppflags': "@COOLPROP_CPPFLAGS@",
+                                  'ldflags': "@COOLPROP_LDFLAGS@",
+                                  'libs': "@COOLPROP_LIBS@",
+                                  'pythonpath': "@COOLPROPPYTHONPATH@"})
+
+        self.libs['metis'] = \
+            prerequisite("METIS",
+                         have = "@cs_have_metis@",
+                         flags = {'cppflags': "@METIS_CPPFLAGS@",
+                                  'ldflags': "@METIS_LDFLAGS@",
+                                  'libs': "@METIS_LIBS@"})
+
+        self.libs['mpi'] = \
+            prerequisite("MPI",
+                         have = "@cs_have_mpi@",
+                         variant = "@mpi_type@",
+                         bindir = "@mpi_bindir@",
+                         libdir = "@mpi_libdir@",
+                         flags = {'cppflags': "@MPI_CPPFLAGS@",
+                                  'ldflags': "@MPI_LDFLAGS@",
+                                  'libs': "@MPI_LIBS@"})
+
+        self.libs['cuda'] = \
+            prerequisite("CUDA",
+                         have = "@cs_have_cuda@",
+                         flags = {'cppflags': "@CUDA_CPPFLAGS@",
+                                  'ldflags': "@CUDA_LDFLAGS@",
+                                  'libs': "@CUDA_LIBS@"})
+
+        self.libs['petsc'] = \
+            prerequisite("PETSc",
+                         have = "@cs_have_petsc@",
+                         flags = {'cppflags': "@PETSC_CPPFLAGS@",
+                                  'ldflags': "@PETSC_LDFLAGS@",
+                                  'libs': "@PETSC_LIBS@"})
+
+        self.libs['scotch'] = \
+            prerequisite("SCOTCH",
+                         have = "@cs_have_scotch@",
+                         flags = {'cppflags': "@SCOTCH_CPPFLAGS@",
+                                  'ldflags': "@SCOTCH_LDFLAGS@",
+                                  'libs': "@SCOTCH_LIBS@"})
+
+    def __get_search_paths_catalyst__(self):
+        """
+        return Catalyst library search path, Python search paths,
+        and other environment variables if available
+        """
+
+        lib_dirs = []
+        pythonpath_dirs = []
+        env_vars = None
+
+        catalyst_lib_dir = None
+
+        libs = self.libs['catalyst'].flags['libs']
+        for l in libs.split('-Wl,'):
+            if l.find('libvtkPVPythonCatalyst') > -1:
+                catalyst_lib_dir = os.path.dirname(l)
+                break
+
+        if catalyst_lib_dir and self.features['relocatable']:
+            catalyst_root_dir = os.getenv('CATALYST_ROOT_DIR')
+            if catalyst_root_dir:
+                subdir_idx = catalyst_lib_dir.rfind('lib')
+                if subdir_idx > 1:
+                    catalyst_lib_dir = os.path.join(catalyst_root_dir,
+                                                    catalyst_lib_dir[subdir_idx:])
+
+        if catalyst_lib_dir:
+            if self.libs['catalyst'].dynamic_load:
+                lib_dirs = [catalyst_lib_dir]
+            sp_dir = os.path.join(catalyst_lib_dir, 'site-packages')
+            if os.path.isdir(sp_dir):
+                pythonpath_dirs = [sp_dir]
+
+        # Add possible additional Catalyst dependency paths
+
+        catalyst_ld_add_path = os.getenv('CATALYST_LD_ADD_PATH')
+        if catalyst_ld_add_path:
+            for d in catalyst_ld_add_path.split(os.pathsep):
+                if d: # avoid empty values before first or after last separator
+                    lib_dirs.append(d)
+
+        # Add additional environment variables
+
+        catalyst_plugin_path = os.getenv('CATALYST_PLUGIN_PATH')
+        if not catalyst_plugin_path:
+            catalyst_plugin_path = ''
+        env_vars = {'PV_PLUGIN_PATH':catalyst_plugin_path}
+
+        return lib_dirs, pythonpath_dirs, env_vars
+
+    def get_run_environment_dependencies(self):
+        """
+        return library search path, Python search paths,
+        and other environment variables if available or required
+        """
+
+        lib_dirs = []
+        pythonpath_dirs = []
+        env_vars = {}
+
+        for lib in self.deplibs:
+            if self.libs[lib].have == "yes":
+
+                if lib == 'catalyst':
+                    catalyst_lib_dirs, catalyst_pythonpath_dirs, catalyst_env_vars \
+                        = self.__get_search_paths_catalyst__()
+
+                    for d in catalyst_lib_dirs:
+                        lib_dirs.append(d)
+                    for p in catalyst_pythonpath_dirs:
+                        pythonpath_dirs.append(p)
+                    env_vars.update(catalyst_env_vars)
+
+        return lib_dirs, pythonpath_dirs, env_vars
+
+    def __get_dep_libs_path_catalyst__(self):
+        """
+        return Catalyst dependency path required for compilation
+        """
+
+        lib_dirs = []
+
+        # Add possible additional Catalyst dependency paths
+
+        catalyst_ld_add_path = os.getenv('CATALYST_LD_ADD_PATH')
+        if catalyst_ld_add_path:
+            for d in catalyst_ld_add_path.split(os.pathsep):
+                if d: # avoid empty values before first or after last separator
+                    lib_dirs.append(d)
+
+        return lib_dirs
+
+    def get_compile_dependency_paths(self):
+        """
+        return additional library search if available or required
+        """
+
+        lib_dirs = []
+
+        for lib in self.deplibs:
+            if self.libs[lib].have == "yes":
+
+                if lib == 'catalyst':
+                    catalyst_lib_dirs = self.__get_dep_libs_path_catalyst__()
+                    for d in catalyst_lib_dirs:
+                        lib_dirs.append(d)
+
+        return lib_dirs
+
+    def print_config(self):
+        """
+        Print configuration info
+        """
+
+        for lib in self.deplibs:
+            self.libs[lib].print_config()
+
+#-------------------------------------------------------------------------------
+
+def process_cmd_line(argv):
+    """
+    Processes the passed command line arguments.
+
+    Input Argument:
+      arg -- This can be either a list of arguments as in
+             sys.argv[1:] or a string that is similar to the one
+             passed on the command line.  If it is a string,
+             it is split to create a list of arguments.
+    """
+
+    parser = OptionParser(usage="usage: %prog [options]")
+
+    parser.add_option("--cc", dest="print_cc",
+                      action="store_true",
+                      help="C compiler used for build")
+
+    parser.add_option("--cxx", dest="print_cxx",
+                      action="store_true",
+                      help="C++ compiler used for build")
+
+    parser.add_option("--fc", dest="print_fc",
+                      action="store_true",
+                      help="Fortran compiler used for build")
+
+    parser.add_option("--cflags", dest="print_cflags",
+                      action="store_true",
+                      help="C compiler flags")
+
+    parser.add_option("--cxxflags", dest="print_cxxflags",
+                      action="store_true",
+                      help="C++ compiler flags")
+
+    parser.add_option("--fcflags", dest="print_fcflags",
+                      action="store_true",
+                      help="Fortran compiler flags")
+
+    parser.add_option("--rpath", dest="print_rpath",
+                      action="store_true",
+                      help="Linker rpath command line")
+
+    parser.add_option("--python", dest="print_python",
+                      action="store_true",
+                      help="Python interpreter")
+
+    parser.add_option("--pyuic4", dest="print_pyuic4",
+                      action="store_true",
+                      help="pyuic4 tool for PyQt4 support")
+
+    parser.add_option("--pyrcc4", dest="print_pyrcc4",
+                      action="store_true",
+                      help="pyrcc4 tool for PyQt4 support")
+
+    parser.add_option("--pyuic5", dest="print_pyuic5",
+                      action="store_true",
+                      help="pyuic5 tool for PyQt5 support")
+
+    parser.add_option("--pyrcc5", dest="print_pyrcc5",
+                      action="store_true",
+                      help="pyrcc5 tool for PyQt5 support")
+
+    parser.add_option("--have", dest="have", metavar="<lib>",
+                      help="supported feature or library")
+
+    parser.add_option("--cppflags", dest="cppflags", metavar="<lib>",
+                      help="C preprocessor flags (e.g. -D<macro>, ...)")
+
+    parser.add_option("--ldflags", dest="ldflags", metavar="<lib>",
+                      help="linker flags (e.g. -g, -L<path>, ...)")
+
+    parser.add_option("--libs", dest="libs", metavar="<lib>",
+                      help="librairies used (e.g. -l<libname>, ...)")
+
+    parser.add_option("--pythondir", dest="print_pythondir",
+                      action="store_true",
+                      help="directory for the 'site-packages' subdirectory" \
+                          " of the standard Python install tree")
+
+    parser.add_option("--datarootdir", dest="print_datarootdir",
+                      action="store_true",
+                      help="directory where architecture-independent" \
+                          + " files are installed (e.g. <prefix>/share)")
+
+    parser.set_defaults(print_cc=False)
+    parser.set_defaults(print_cxx=False)
+    parser.set_defaults(print_fc=False)
+
+    parser.set_defaults(print_cflags=False)
+    parser.set_defaults(print_cxxflags=False)
+    parser.set_defaults(print_fcflags=False)
+
+    parser.set_defaults(print_rpath=False)
+
+    parser.set_defaults(print_python=False)
+    parser.set_defaults(print_pyrcc4=False)
+    parser.set_defaults(print_pyuic4=False)
+    parser.set_defaults(print_pyrcc5=False)
+    parser.set_defaults(print_pyuic5=False)
+
+    parser.set_defaults(have=None)
+    parser.set_defaults(cppflags=None)
+    parser.set_defaults(ldflags=None)
+    parser.set_defaults(libs=None)
+
+    parser.set_defaults(print_pythondir=False)
+    parser.set_defaults(print_datarootdir=False)
+
+    (options, args) = parser.parse_args(argv)
+
+    if len(args) > 0:
+        parser.print_help()
+        sys.exit(1)
+
+    return options
+
+#-------------------------------------------------------------------------------
+
+def get_config(pkg):
+    """
+    Get the configuration information.
+    """
+    msg = """\
+Compilers and associated options:
+  cc = %(cc)s
+  cxx = %(cxx)s
+  fc = %(fc)s
+  cflags = %(cflags)s
+  cxxflags = %(cxxflags)s
+  fcflags = %(fcflags)s
+  rpath = %(rpath)s\
+"""
+
+    return msg \
+        % { 'cc':pkg.config.compilers['cc'],
+            'cxx': pkg.config.compilers['cxx'],
+            'fc':pkg.config.compilers['fc'],
+            'cflags':pkg.config.flags['cflags'],
+            'cxxflags':pkg.config.flags['cxxflags'],
+            'fcflags':pkg.config.flags['fcflags'],
+            'rpath':pkg.config.rpath }
+
+#-------------------------------------------------------------------------------
+# Main
+#-------------------------------------------------------------------------------
+
+def main(argv, pkg):
+    """
+    Main configuration info function.
+    """
+
+    opts = process_cmd_line(argv)
+
+    cfg = pkg.config
+
+    if opts.print_cc  == True: print(cfg.compilers['cc'])
+    if opts.print_cxx == True: print(cfg.compilers['cxx'])
+    if opts.print_fc  == True: print(cfg.compilers['fc'])
+
+    if opts.print_cflags   == True: print(cfg.flags['cflags'])
+    if opts.print_cxxflags == True: print(cfg.flags['cxxflags'])
+    if opts.print_fcflags  == True: print(cfg.flags['fcflags'])
+
+    if opts.print_rpath == True: print(cfg.rpath)
+
+    if opts.print_python  == True: print(cfg.python)
+    if opts.print_pyuic4  == True: print(cfg.pyuic4)
+    if opts.print_pyrcc4  == True: print(cfg.pyrcc4)
+    if opts.print_pyuic5  == True: print(cfg.pyuic5)
+    if opts.print_pyrcc5  == True: print(cfg.pyrcc5)
+
+    if opts.have is not None:
+        if opts.have in cfg.deplibs: print(cfg.libs[opts.have].have)
+        if opts.have in cfg.optfeatures: print(cfg.features[opts.have])
+
+    if opts.cppflags is not None:
+        # Specific handling of Code_Saturne has pkgincludedir has to be
+        # correctly expended. Likewise for PLE, if internal version is used
+        if opts.cppflags == "saturne":
+            print("-I" + pkg.get_dir("pkgincludedir"))
+        elif opts.cppflags == "ple":
+            if cfg.libs['ple'].variant == "internal":
+                print("-I" + pkg.get_dir("includedir"))
+            else:
+                print(cfg.libs[opts.cppflags].flags['cppflags'])
+        else:
+            print(cfg.libs[opts.cppflags].flags['cppflags'])
+
+    if opts.ldflags is not None:
+        # Specific handling of Code_Saturne has pkgincludedir has to be
+        # correctly expended. Likewise for PLE, if internal version is used
+        if opts.ldflags == "saturne":
+            print("-L" + pkg.get_dir("libdir"))
+        elif opts.ldflags == "ple":
+            if cfg.libs['ple'].variant == "internal":
+                print("-L" + pkg.get_dir("libdir"))
+            else:
+                print(cfg.libs[opts.cppflags].flags['ldflags'])
+        else:
+            if cfg.libs[opts.ldflags].dynamic_load == False:
+                print(cfg.libs[opts.ldflags].flags['ldflags'])
+
+    if opts.libs is not None:
+        if cfg.libs[opts.libs].dynamic_load == False:
+            print(cfg.libs[opts.libs].flags['libs'])
+
+    if opts.print_pythondir: print(pkg.get_dir("pythondir"))
+    if opts.print_datarootdir: print(pkg.get_dir("datarootdir"))
+
+#-------------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    import sys
+    from code_saturne import cs_package
+    pkg = cs_package.package()
+    main(sys.argv[1:], pkg)
+
